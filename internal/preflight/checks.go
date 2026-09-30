@@ -11,6 +11,7 @@ import (
 	"k8s-cex-dra-driver/internal/features"
 	"k8s-cex-dra-driver/internal/mdev"
 	"k8s-cex-dra-driver/internal/sysfs"
+	"k8s-cex-dra-driver/internal/zcrypt"
 )
 
 const (
@@ -26,15 +27,24 @@ const (
 var apQueueDirGlob = "/sys/bus/ap/devices/card*/*.*"
 
 // registry is every check the phase runs, as name, severity and body, in the
-// order they are reported. A new check is a new entry here. The vfio_ap and
-// mdev checks serve only the virtual-machine path, so they carry its gate
-// and are skipped when the path is disabled.
+// order they are reported. A new check is a new entry here.
+//
+// Only the virtual-machine path rebinds queues: it moves them from zcrypt to
+// vfio_ap through driver_override and builds vfio-ap mediated devices on top.
+// Every prerequisite of that rebinding - the vfio_ap module, mdev support,
+// the driver_override attribute and the all-1s masks it depends on - therefore
+// carries the VirtualMachineWorkload gate and is skipped on a node that
+// declares the path disabled. Such a node never writes driver_override, so it
+// runs on kernels that predate the AP-bus feature (mainline 6.19). Startup
+// recovery stays ungated: it globs driver_override and finds nothing to drain
+// where the attribute does not exist.
 var registry = []check{
 	{name: "/sys/bus/ap present", severity: SeverityError, body: checkPathPresent(sysBusAPPath)},
 	{name: "vfio_ap loaded (/sys/devices/vfio_ap/matrix present)", severity: SeverityError, body: checkVFIOAPMatrix, gate: features.VirtualMachineWorkload},
 	{name: "mdev support (/sys/class/mdev_bus present)", severity: SeverityError, body: checkPathPresent(sysClassMdevBusPath), gate: features.VirtualMachineWorkload},
-	{name: "driver_override on AP queues", severity: SeverityError, body: checkDriverOverride},
-	{name: "zcrypt masks all-1s (driver_override precondition)", severity: SeverityError, body: checkZcryptMasks},
+	{name: "driver_override on AP queues", severity: SeverityError, body: checkDriverOverride, gate: features.VirtualMachineWorkload},
+	{name: "zcrypt masks all-1s (driver_override precondition)", severity: SeverityError, body: checkZcryptMasks, gate: features.VirtualMachineWorkload},
+	{name: "zcrypt device nodes (/sys/class/zcrypt/create present)", severity: SeverityError, body: checkZcryptNodes, gate: features.ContainerWorkload},
 }
 
 func checkPathPresent(path string) CheckFunc {
@@ -47,6 +57,19 @@ func checkPathPresent(path string) CheckFunc {
 		}
 		return StatusOK, ""
 	}
+}
+
+// checkZcryptNodes verifies the kernel offers additional zcrypt device nodes,
+// which the container path builds on. The interface has no Kconfig option of
+// its own: it is part of the zcrypt driver since Linux 4.20, and the class
+// directory appears once the zcrypt module is loaded, with or without crypto
+// cards assigned.
+func checkZcryptNodes() (Status, string) {
+	if !zcrypt.Supported() {
+		return StatusError, fmt.Sprintf("%s missing - zcrypt module not loaded or kernel older than 4.20",
+			filepath.Join(zcrypt.ClassDir, "create"))
+	}
+	return StatusOK, ""
 }
 
 func checkVFIOAPMatrix() (Status, string) {

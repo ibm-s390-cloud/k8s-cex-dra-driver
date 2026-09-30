@@ -30,4 +30,4 @@ A claim using one is admitted and allocated but fails at prepare with `controlDo
 A misspelled value fails with `unknown controlDomainMode`, so a typo never looks like a not-yet-available mode.
 
 One effective value per claim, resolved built-in default, then DeviceClass configuration, then claim configuration.
-Ignored (not rejected) for container claims.
+Container claims apply the two enabled modes the same way through the zcrypt node's control-domain mask, and grant no control domain for a mode that is not enabled instead of rejecting the claim.

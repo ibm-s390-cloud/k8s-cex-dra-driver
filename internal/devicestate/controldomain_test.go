@@ -136,25 +136,6 @@ func TestPrepareRejectsControlDomainModeBeforeTouchingSysfs(t *testing.T) {
 	}
 }
 
-// TestPrepareIgnoresControlDomainModeForContainers pins the edge case: a claim
-// may be written once and land on nodes with either binding type, and the
-// container path has no assign_control_domain to act on, so a mode it cannot
-// serve must not fail it.
-func TestPrepareIgnoresControlDomainModeForContainers(t *testing.T) {
-	// The container path sits behind the ContainerWorkload gate. This test is
-	// about what the path does once reached.
-	enableContainerWorkload(t)
-	s := cdTestState(t)
-
-	devices, err := s.Prepare(t.Context(), claimWithMode(t, DeviceClassContainer, cryptoconfig.ControlDomainModeAllControlDomains))
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
-	if len(devices) != 1 {
-		t.Fatalf("prepared %d devices, want 1", len(devices))
-	}
-}
-
 // TestAssignMdevControlDomains covers the two enabled modes against a fake
 // matrix tree.
 //

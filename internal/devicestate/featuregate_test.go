@@ -77,25 +77,6 @@ func TestPrepareRejectsContainerClaimWhileGateDisabled(t *testing.T) {
 	}
 }
 
-// TestPrepareContainerStubBehindEnabledGate pins that enabling the gate
-// restores exactly the pre-gate stub: the claim prepares, its device is
-// reported, and no CDI device is attached (the path is not implemented).
-func TestPrepareContainerStubBehindEnabledGate(t *testing.T) {
-	enableContainerWorkload(t)
-	s := cdTestState(t)
-
-	devices, err := s.Prepare(t.Context(), claimWithMode(t, DeviceClassContainer, ""))
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
-	if len(devices) != 1 {
-		t.Fatalf("prepared %d devices, want 1", len(devices))
-	}
-	if ids := devices[0].GetCdiDeviceIds(); len(ids) != 0 {
-		t.Errorf("prepared device carries CDI devices %v, want none (unimplemented stub)", ids)
-	}
-}
-
 // TestPrepareRejectsVMClaimWhileGateDisabled mirrors the container-gate
 // rejection on the VM side: with VirtualMachineWorkload off the node was
 // declared container-only, so a VM claim must fail loudly at prepare, before

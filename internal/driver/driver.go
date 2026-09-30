@@ -107,6 +107,14 @@ func New(ctx context.Context, cfg *Config) (*Driver, error) {
 		logphase.Warnf(logphase.Preparation, "GC stale KEP-5304 metadata: %v", err)
 	}
 
+	// The container path's twin of both passes above: a zcrypt node and its
+	// CDI spec are written as a pair, so a crash between the writes leaves one
+	// without the other. Ungated like the drain: cleanup must run whatever
+	// the gates say now.
+	if err := devicestate.ReconcileZcryptNodes(cfg.CDIRoot); err != nil {
+		logphase.Warnf(logphase.Preparation, "reconcile zcrypt nodes: %v", err)
+	}
+
 	// Initialize device state
 	d.state = devicestate.New(cfg.NodeName, cfg.DriverName, cfg.CDIRoot, cfg.PluginDataDirectoryPath)
 

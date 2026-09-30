@@ -41,7 +41,7 @@ The manifests live under `deploy/kustomize/`:
 base/                       DaemonSet (hardened, unprivileged), SA, ClusterRole(Binding)
 components/
   deviceclass-vm/           DeviceClass ap-queue.virtual-machine.ibm.com (opt-in)
-  feature-container-workload/  container DeviceClass + ContainerWorkload gate (opt-in, alpha)
+  feature-container-workload/  container DeviceClass + ContainerWorkload gate + zcrypt mounts (opt-in, alpha)
   skip-preflight/           sets CEX_DRA_SKIP_PREFLIGHT=1                 (opt-in)
   vfio-ap-mounts/           VM-path host mounts: /sys/devices/vfio_ap, /var/run/cdi (opt-in)
   selinux-spc/              seLinuxOptions.type: spc_t for enforcing SELinux (opt-in)
@@ -95,7 +95,11 @@ cp -r deploy/kustomize/overlays/template deploy/kustomize/overlays/my-cluster
    ```
 
    - `feature-container-workload` opts into the alpha container workload path: it ships the container DeviceClass together with the `ContainerWorkload` feature gate the driver requires before preparing a claim against it.
-     The path behind the gate is an unimplemented stub in this release, so leave the component out unless you are developing that path.
+     It also carries the host mounts the path writes through: `/sys/class/zcrypt` to create and destroy the per-claim zcrypt nodes, `/sys/devices/virtual` for their masks, `/var/run/cdi` for their CDI specs, and `/var/run/cex-dra/shadowsysfs` for the per-claim shadow AP sysfs trees.
+     The shadow sysfs root is mounted at its host path because the runtime resolves the CDI mounts pointing into it on the host; a different root set with `--shadow-sysfs-root` needs the same change to the mount.
+     On SELinux nodes the driver labels each tree `container_file_t`, which requires the `selinux-spc` component (or another context allowed to relabel), so pods can read the mounts.
+     The masks live under `/sys/devices/virtual/zcrypt`, which the kernel creates only with the first additional node, so its always-present parent is mounted instead.
+     `/sys/class/zcrypt` is `type: Directory`, so the pod starts only where the zcrypt module is loaded.
    - `vfio-ap-mounts` carries the two host mounts the VM path cannot work without: the writable `/sys/devices/vfio_ap` subtree the unprivileged DaemonSet needs to manage vfio-ap mediated devices, and the host's `/var/run/cdi` directory the driver writes prepared-claim CDI specs into.
      The runtime reads CDI specs from the host's `/var/run/cdi`.
      Without the mount, a spec lands only inside the container and the consuming pod fails with `unresolvable CDI devices ibm.com/vfio-ap-passthrough=...`.

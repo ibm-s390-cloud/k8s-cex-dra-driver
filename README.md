@@ -4,7 +4,7 @@ This driver enables Kubernetes workloads to use IBM Crypto Express (CEX) cards o
 It exposes CEX cards as allocatable Kubernetes resources.
 
 The current release supports [KubeVirt](https://kubevirt.io/) virtual machine workloads.
-Support for containerized workloads is planned for a future release.
+Containerized workloads are available as an alpha feature behind the `ContainerWorkload` feature gate.
 
 The [k8s-cex-dev-plugin](https://github.com/ibm-s390-cloud/k8s-cex-dev-plugin) project also gives Kubernetes workloads access to CEX cards.
 It is separate from this driver and does not use DRA.

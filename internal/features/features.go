@@ -49,8 +49,9 @@ const (
 	// VirtualMachineWorkload enables the virtual-machine passthrough path:
 	// claims against the DeviceClass ap-queue.virtual-machine.ibm.com,
 	// vfio-ap binding and mdev creation, and the VM-stack preflight checks
-	// (vfio_ap, mdev). Disabling it is a supported configuration for nodes
-	// that only serve container workloads.
+	// (vfio_ap, mdev, AP-bus driver_override, all-1s zcrypt masks). Disabling
+	// it is a supported configuration for nodes that only serve container
+	// workloads, including nodes whose kernel lacks AP-bus driver_override.
 	//
 	// Owner: @bodo-brand1
 	// Beta: v1.0.0-alpha.0

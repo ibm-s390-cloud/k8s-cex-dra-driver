@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 
 	resourceapi "k8s.io/api/resource/v1"
 	"k8s.io/dynamic-resource-allocation/resourceslice"
@@ -23,6 +24,8 @@ import (
 	"k8s-cex-dra-driver/internal/logphase"
 	"k8s-cex-dra-driver/internal/mdev"
 	"k8s-cex-dra-driver/internal/metadata"
+	"k8s-cex-dra-driver/internal/shadowsysfs"
+	"k8s-cex-dra-driver/internal/zcrypt"
 )
 
 const (
@@ -250,12 +253,11 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 		return nil, fmt.Errorf("claim %s mixes VM and container DeviceClasses, which is not supported", claim.UID)
 	}
 
-	// The container path is an unimplemented stub that would prepare the claim
-	// into a pod with no crypto device, so it stays behind an off-by-default
-	// gate. Checked before anything is created or switched: the claim is left
+	// The container path is alpha, so it stays behind an off-by-default gate.
+	// Checked before anything is created or switched: the claim is left
 	// untouched for a retry after a gate flip and plugin restart.
 	if hasContainer && !features.Gate.Enabled(features.ContainerWorkload) {
-		return nil, fmt.Errorf("DeviceClass %q requires the ContainerWorkload feature gate, which is disabled: the container passthrough path is not implemented in this release", DeviceClassContainer)
+		return nil, fmt.Errorf("DeviceClass %q requires the ContainerWorkload feature gate, which is disabled on this node", DeviceClassContainer)
 	}
 
 	// The VM path is guarded the same way: its gate off means the node was
@@ -277,8 +279,7 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 	}
 
 	if hasContainer {
-		logphase.Logf(logphase.Preparation, "Container DeviceClass: skipping mdev creation for claim %s", claim.UID)
-		return s.devicesFromClaim(claim, nil)
+		return s.prepareContainer(ctx, claim, cfg.ControlDomainMode)
 	}
 
 	// VM DeviceClass: per-queue switching + mdev creation
@@ -286,9 +287,9 @@ func (s *DeviceState) Prepare(ctx context.Context, claim *resourceapi.ResourceCl
 
 	// Check the control-domain mode before anything touches the mdev, so a claim
 	// asking for a mode the driver cannot serve fails without leaving a
-	// half-built device behind. Field-level, unlike the parse above: a container
-	// binding has no assign_control_domain to act on, so the mode is ignored
-	// there rather than rejected.
+	// half-built device behind. Field-level, unlike the parse above: the
+	// container path grants no control domains for a mode it cannot serve
+	// rather than rejecting the claim (see containerControlDomains).
 	if err := cryptoconfig.ValidateControlDomainMode(cfg.ControlDomainMode); err != nil {
 		return nil, fmt.Errorf("claim %s: %w", claimUID, err)
 	}
@@ -543,6 +544,23 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 	}
 	defer s.unlock()
 
+	// The container path's whole footprint is a zcrypt node, a shadow sysfs
+	// tree and the CDI spec that hands both to the container. All removals
+	// are idempotent, so they run for every claim - a VM claim has none of
+	// them and costs a few stats - which keeps cleanup independent of gates
+	// and of how the claim was prepared. The spec goes first: a crash after
+	// it leaves a node or tree without a spec, which the startup reconcile
+	// removes.
+	if err := cdi.DeleteZcryptClaimSpec(s.cdiRoot, claimUID); err != nil {
+		return fmt.Errorf("delete zcrypt CDI spec for claim %s: %w", claimUID, err)
+	}
+	if err := zcrypt.Destroy(zcrypt.NodeName(claimUID)); err != nil {
+		return fmt.Errorf("destroy zcrypt node for claim %s: %w", claimUID, err)
+	}
+	if err := shadowsysfs.Remove(claimUID); err != nil {
+		return fmt.Errorf("remove shadow sysfs for claim %s: %w", claimUID, err)
+	}
+
 	// Captured before the deletes below remove both files. Only the VM path
 	// builds an mdev and writes claim metadata, so finding either means this
 	// claim may have switched queues to vfio-ap. A container claim leaves
@@ -602,6 +620,229 @@ func (s *DeviceState) Unprepare(ctx context.Context, claimUID string) error {
 		}
 	}
 
+	return nil
+}
+
+// prepareContainer prepares a container claim: a zcrypt device node whose
+// masks grant exactly the claim's queues, handed to the container as
+// /dev/z90crypt through a CDI spec, and a shadow AP sysfs mounted over the
+// container's /sys/bus/ap and /sys/devices/ap so the workload lists only
+// those queues. The queues stay bound to the zcrypt
+// driver throughout, nothing is rebound, so the path needs neither vfio_ap
+// nor AP-bus driver_override.
+//
+// Every step converges on retry: the node is reused when it exists, its masks
+// are written in absolute form, and the CDI spec is rewritten. A kubelet
+// retry after a partial failure therefore finishes the job instead of
+// tripping over what the first attempt left.
+func (s *DeviceState) prepareContainer(ctx context.Context, claim *resourceapi.ResourceClaim, controlDomainMode string) ([]*drapbv1.Device, error) {
+	claimUID := string(claim.UID)
+
+	// The node's masks form a cross-product of adapters and domains, exactly
+	// like an mdev matrix, so the same constraint keeps it from reaching
+	// queues the claim was not allocated.
+	adapters, domains, allocated, err := s.collectAllocatedAPQNs(claim)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.requireZcryptBound(claim); err != nil {
+		return nil, fmt.Errorf("claim %s: %w", claimUID, err)
+	}
+
+	perms := zcrypt.Perms{Ioctls: zcrypt.AllIoctls()}
+	if perms.Adapters, err = hexIDs(adapters); err != nil {
+		return nil, fmt.Errorf("claim %s: adapter: %w", claimUID, err)
+	}
+	if perms.UsageDomains, err = hexIDs(domains); err != nil {
+		return nil, fmt.Errorf("claim %s: domain: %w", claimUID, err)
+	}
+	perms.ControlDomains = containerControlDomains(claimUID, controlDomainMode, perms.UsageDomains)
+
+	name := zcrypt.NodeName(claimUID)
+	if err := ensureZcryptNode(ctx, name, perms); err != nil {
+		return nil, fmt.Errorf("claim %s: %w", claimUID, err)
+	}
+	major, minor, err := zcrypt.DevNumber(name)
+	if err != nil {
+		return nil, fmt.Errorf("claim %s: %w", claimUID, err)
+	}
+
+	// The shadow tree reports the same grid the node's masks grant, control
+	// domains included, so what the workload lists is what it can reach.
+	tree, err := shadowsysfs.Build(claimUID, shadowsysfs.Grid{
+		Adapters:       perms.Adapters,
+		UsageDomains:   perms.UsageDomains,
+		ControlDomains: perms.ControlDomains,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim %s: %w", claimUID, err)
+	}
+
+	apqns := make([]string, 0, len(allocated))
+	for q := range allocated {
+		apqns = append(apqns, q.APID+"."+q.APQI)
+	}
+	sort.Strings(apqns)
+
+	cdiDeviceID, err := cdi.GenerateZcryptClaimSpec(s.cdiRoot, cdi.ZcryptSpec{
+		ClaimUID: claimUID,
+		Major:    major,
+		Minor:    minor,
+		APQNs:    apqns,
+		Mounts: []cdi.ReadOnlyMount{
+			{HostPath: tree.BusDir, ContainerPath: shadowsysfs.ContainerBusDir},
+			{HostPath: tree.DevicesDir, ContainerPath: shadowsysfs.ContainerDevicesDir},
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("generate zcrypt CDI spec for claim %s: %w", claimUID, err)
+	}
+	return s.devicesFromClaim(claim, []string{cdiDeviceID})
+}
+
+// requireZcryptBound refuses queues the last scan saw bound to anything but
+// the zcrypt driver. A container claim reaches its queues through zcrypt, so a
+// queue on vfio_ap - a VM claim's teardown not yet drained, or a manual
+// passthrough - or an unbound queue would give the container a node that
+// cannot reach it. The container path never rebinds: that needs
+// driver_override, which a container-only node may lack. The check reads the
+// published cex.ibm.com/driver attribute, so a queue released moments ago
+// can fail once and prepare on the kubelet's retry after the next scan. A
+// device without the attribute is not refused.
+func (s *DeviceState) requireZcryptBound(claim *resourceapi.ResourceClaim) error {
+	var wrong []string
+	for _, result := range claim.Status.Allocation.Devices.Results {
+		if result.Driver != s.driverName {
+			continue
+		}
+		driver, ok := StringAttribute(s.allocatable[result.Device], "cex.ibm.com/driver")
+		if ok && !strings.HasPrefix(driver, "cex") {
+			if driver == "" {
+				driver = "no driver"
+			}
+			wrong = append(wrong, fmt.Sprintf("%s (bound to %s)", result.Device, driver))
+		}
+	}
+	if len(wrong) > 0 {
+		sort.Strings(wrong)
+		return fmt.Errorf("queues not bound to the zcrypt driver: %s", strings.Join(wrong, ", "))
+	}
+	return nil
+}
+
+// containerControlDomains returns the control domains a container claim's
+// node grants. The two enabled modes mean what they mean on the VM path:
+// usage-and-control grants exactly the allocated domains, usage-only none.
+// A claim can be written once and land on either binding, so a mode the
+// driver does not serve is not an error here. It grants no control domain,
+// never more than the allocation bounds.
+func containerControlDomains(claimUID, mode string, usageDomains []int) []int {
+	switch mode {
+	case cryptoconfig.ControlDomainModeUsageAndControl:
+		return usageDomains
+	case cryptoconfig.ControlDomainModeUsageOnly:
+		return nil
+	default:
+		logphase.Logf(logphase.Preparation, "controlDomainMode=%q for container claim %s is not served: granting no control domains", mode, claimUID)
+		return nil
+	}
+}
+
+// ensureZcryptNode brings a claim's zcrypt node to exactly perms: created
+// when missing, restricted either way. Restrict writes absolute masks, so an
+// existing node - a kubelet retry, or a crash after create - converges
+// without being destroyed. A node this call created and could not restrict
+// is destroyed again. A fresh node grants nothing, so the partial state is
+// harmless, but it would be reused on retry without need.
+func ensureZcryptNode(ctx context.Context, name string, perms zcrypt.Perms) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("preparing zcrypt node %s: %w", name, err)
+	}
+	created := false
+	if !zcrypt.Exists(name) {
+		if err := zcrypt.Create(name); err != nil {
+			return err
+		}
+		created = true
+	}
+	if err := zcrypt.Restrict(name, perms); err != nil {
+		if created {
+			if dErr := zcrypt.Destroy(name); dErr != nil {
+				logphase.Warnf(logphase.Preparation, "destroy of partial zcrypt node %s failed: %v", name, dErr)
+			}
+		}
+		return err
+	}
+	return nil
+}
+
+// hexIDs converts a set of hex AP ids ("06", "0002") to sorted numbers.
+func hexIDs(set map[string]bool) ([]int, error) {
+	out := make([]int, 0, len(set))
+	for h := range set {
+		v, err := strconv.ParseUint(h, 16, 16)
+		if err != nil {
+			return nil, fmt.Errorf("parse hex id %q: %w", h, err)
+		}
+		out = append(out, int(v))
+	}
+	sort.Ints(out)
+	return out, nil
+}
+
+// ReconcileZcryptNodes removes what a crash between the container path's
+// writes leaves behind. Prepare creates a claim's zcrypt node and shadow
+// sysfs tree, then its CDI spec. Unprepare removes the spec, then the node
+// and the tree. So a spec without its node, or a node or tree of this driver
+// without a spec, belongs to no prepared claim: the spec is deleted, the
+// node destroyed, the tree removed. A pair is kept - the
+// kubelet still holds the claim and unprepares it through the normal path.
+// Nodes an administrator made are never listed, let alone touched. Run at
+// startup, before the kubelet plugin can race it.
+func ReconcileZcryptNodes(cdiRoot string) error {
+	live := func(claimUID string) bool { return zcrypt.Exists(zcrypt.NodeName(claimUID)) }
+	if err := cdi.GCStaleZcryptClaimSpecs(cdiRoot, live); err != nil {
+		return err
+	}
+	uids, err := cdi.ZcryptClaimSpecUIDs(cdiRoot)
+	if err != nil {
+		return err
+	}
+	withSpec := make(map[string]bool, len(uids))
+	for _, uid := range uids {
+		withSpec[zcrypt.NodeName(uid)] = true
+	}
+	nodes, err := zcrypt.List()
+	if err != nil {
+		return err
+	}
+	for _, name := range nodes {
+		if withSpec[name] {
+			continue
+		}
+		logphase.Logf(logphase.Preparation, "destroying orphaned zcrypt node %s (no CDI spec)", name)
+		if err := zcrypt.Destroy(name); err != nil {
+			logphase.Warnf(logphase.Preparation, "%v", err)
+		}
+	}
+
+	specUIDs := make(map[string]bool, len(uids))
+	for _, uid := range uids {
+		specUIDs[uid] = true
+	}
+	trees, err := shadowsysfs.List()
+	if err != nil {
+		return err
+	}
+	for _, uid := range trees {
+		if specUIDs[uid] {
+			continue
+		}
+		logphase.Logf(logphase.Preparation, "removing orphaned shadow sysfs for claim %s (no CDI spec)", uid)
+		if err := shadowsysfs.Remove(uid); err != nil {
+			logphase.Warnf(logphase.Preparation, "%v", err)
+		}
+	}
 	return nil
 }
 

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"k8s.io/component-base/featuregate"
+
 	"k8s-cex-dra-driver/internal/features"
 	"k8s-cex-dra-driver/internal/mdev"
 )
@@ -42,6 +44,30 @@ func disableVirtualMachineWorkload(t *testing.T) {
 			t.Errorf("restore %s: %v", features.VirtualMachineWorkload, err)
 		}
 	})
+}
+
+// enableContainerWorkload flips the ContainerWorkload gate on for one test,
+// restoring its off default afterwards.
+func enableContainerWorkload(t *testing.T) {
+	t.Helper()
+	if err := features.Set(string(features.ContainerWorkload) + "=true"); err != nil {
+		t.Fatalf("enable %s: %v", features.ContainerWorkload, err)
+	}
+	t.Cleanup(func() {
+		if err := features.Set(string(features.ContainerWorkload) + "=false"); err != nil {
+			t.Errorf("restore %s: %v", features.ContainerWorkload, err)
+		}
+	})
+}
+
+// skippedFor returns the names of the checks skipped for gate, or nil.
+func skippedFor(skipped []gateSkips, gate featuregate.Feature) []string {
+	for _, s := range skipped {
+		if s.gate == gate {
+			return s.names
+		}
+	}
+	return nil
 }
 
 func TestRunAllOK(t *testing.T) {
@@ -152,6 +178,79 @@ func TestPartitionByGate(t *testing.T) {
 	}
 	if got, want := strings.Join(skipped[0].names, ","), "b,d"; got != want {
 		t.Errorf("skipped names = %q, want %q", got, want)
+	}
+}
+
+// TestRegistryGatesVirtualMachinePrerequisites pins which real host checks
+// belong to the virtual-machine path. Every prerequisite of rebinding queues
+// to vfio_ap - including driver_override and the masks it depends on - must
+// be skipped on a container-only node, so such a node starts on kernels
+// without AP-bus driver_override. The node the test models is the one that
+// flag describes: VirtualMachineWorkload off, ContainerWorkload on. It must
+// keep the AP bus and the zcrypt node checks, nothing else. The partition
+// inspects the registry without running any body, so the test does not
+// depend on the test host's sysfs.
+func TestRegistryGatesVirtualMachinePrerequisites(t *testing.T) {
+	disableVirtualMachineWorkload(t)
+	enableContainerWorkload(t)
+
+	active, skipped := partitionByGate(registry)
+
+	var activeNames []string
+	for _, c := range active {
+		activeNames = append(activeNames, c.name)
+	}
+	if want := []string{
+		"/sys/bus/ap present",
+		"zcrypt device nodes (/sys/class/zcrypt/create present)",
+	}; strings.Join(activeNames, "|") != strings.Join(want, "|") {
+		t.Errorf("active checks on a container-only node = %q, want %q", activeNames, want)
+	}
+
+	if len(skipped) != 1 || skipped[0].gate != features.VirtualMachineWorkload {
+		t.Fatalf("skipped = %+v, want one entry for %s", skipped, features.VirtualMachineWorkload)
+	}
+	for _, want := range []string{
+		"vfio_ap loaded (/sys/devices/vfio_ap/matrix present)",
+		"mdev support (/sys/class/mdev_bus present)",
+		"driver_override on AP queues",
+		"zcrypt masks all-1s (driver_override precondition)",
+	} {
+		found := false
+		for _, n := range skipped[0].names {
+			if n == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("check %q not skipped with %s disabled; skipped = %q", want, features.VirtualMachineWorkload, skipped[0].names)
+		}
+	}
+}
+
+// TestRegistryRunsAllChecksWithVirtualMachineWorkload guards the other
+// direction: with the gate at its default-on state no VM check is skipped, so
+// a node meant to serve VMs still fails loudly on a missing driver_override or
+// restricted masks. At the defaults only the zcrypt node check - the alpha
+// container path's - is skipped; with both paths on, nothing is.
+func TestRegistryRunsAllChecksWithVirtualMachineWorkload(t *testing.T) {
+	_, skipped := partitionByGate(registry)
+	if names := skippedFor(skipped, features.VirtualMachineWorkload); len(names) != 0 {
+		t.Errorf("skipped %q with %s enabled, want none", names, features.VirtualMachineWorkload)
+	}
+	if got, want := strings.Join(skippedFor(skipped, features.ContainerWorkload), "|"),
+		"zcrypt device nodes (/sys/class/zcrypt/create present)"; got != want {
+		t.Errorf("skipped at defaults for %s = %q, want %q", features.ContainerWorkload, got, want)
+	}
+
+	enableContainerWorkload(t)
+	active, skipped := partitionByGate(registry)
+	if len(skipped) != 0 {
+		t.Errorf("skipped = %+v, want none with both workload gates enabled", skipped)
+	}
+	if len(active) != len(registry) {
+		t.Errorf("active checks = %d, want all %d", len(active), len(registry))
 	}
 }
 

@@ -27,14 +27,14 @@ An unknown gate name or a non-boolean value is a startup error - the pod crash-l
 
 Gates this release defines:
 
-| Gate                     | Stage | Default | Effect when enabled                                                                                                                                               |
-| ------------------------ | ----- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `ContainerWorkload`      | alpha | off     | Accepts claims against the container DeviceClass `ap-queue.container.ibm.com`. The path behind it is an unimplemented stub that delivers no device.               |
-| `VirtualMachineWorkload` | beta  | on      | The virtual-machine passthrough path: claims against `ap-queue.virtual-machine.ibm.com`, vfio-ap binding, mdev creation, and the `vfio_ap`/mdev preflight checks. |
+| Gate                     | Stage | Default | Effect when enabled                                                                                                                                                                                                     |
+| ------------------------ | ----- | ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `ContainerWorkload`      | alpha | off     | Accepts claims against the container DeviceClass `ap-queue.container.ibm.com`: a zcrypt device node restricted to the allocated queues, mapped to `/dev/z90crypt`, a shadow AP sysfs, and the zcrypt node preflight check. |
+| `VirtualMachineWorkload` | beta  | on      | The virtual-machine passthrough path: claims against `ap-queue.virtual-machine.ibm.com`, vfio-ap binding, mdev creation, and its preflight checks (`vfio_ap`, mdev, `driver_override`, all-1s masks).                     |
 
 With `ContainerWorkload` off, a claim against the container DeviceClass fails at prepare with an error naming the gate.
-Enabling it is for developing that path, not for delivering devices.
-Setting `VirtualMachineWorkload=false` declares a container-only node: the `vfio_ap` and mdev preflight checks are skipped, so the node runs the driver without the `vfio_ap` kernel module, and a claim against the VM DeviceClass fails at prepare with an error naming the gate.
+Enabling it delivers the alpha container path described under [Requesting queues](../usage/usage.md#containers).
+Setting `VirtualMachineWorkload=false` declares a container-only node: the virtual-machine preflight checks (`vfio_ap`, mdev, AP-bus `driver_override` and the all-1s zcrypt masks) are skipped, so the node runs the driver without the `vfio_ap` kernel module and on kernels without AP-bus `driver_override`, and a claim against the VM DeviceClass fails at prepare with an error naming the gate.
 Cleanup is never gated - claims prepared before the flip still unprepare, and leftover vfio-ap state drains back to zcrypt on the next start.
 Disabling every workload gate is a startup error: the driver would serve nothing.
 The gate is planned to graduate GA-unlocked at 1.0.0, keeping the opt-out supported indefinitely.

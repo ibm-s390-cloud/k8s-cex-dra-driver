@@ -1,5 +1,6 @@
-// Package cdi generates Container Device Interface specs for vfio-ap mediated
-// devices allocated to a claim.
+// Package cdi generates Container Device Interface specs for the devices a
+// claim is prepared into: vfio-ap mediated devices for virtual machines, and
+// zcrypt device nodes for containers.
 package cdi
 
 import (

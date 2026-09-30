@@ -29,10 +29,10 @@ Both axes matter for placement, which is what the `matchAttribute` constraint in
 
 The driver defines two DeviceClasses, both selecting every device the driver publishes:
 
-| DeviceClass                        | Intended binding                                                                        |
-| ---------------------------------- | --------------------------------------------------------------------------------------- |
-| `ap-queue.virtual-machine.ibm.com` | vfio-ap mediated device, passed to a KubeVirt VM                                        |
-| `ap-queue.container.ibm.com`       | zcrypt device node passthrough into a container (feature gated, disabled at this stage) |
+| DeviceClass                        | Intended binding                                                       |
+| ---------------------------------- | ---------------------------------------------------------------------- |
+| `ap-queue.virtual-machine.ibm.com` | vfio-ap mediated device, passed to a KubeVirt VM                       |
+| `ap-queue.container.ibm.com`       | zcrypt device node passthrough into a container (alpha, feature gated) |
 
 Which classes a cluster holds is an install choice, made per class through the opt-in Kustomize components in [Driver installation](installation/driver.md).
 The container class installs only with the alpha `feature-container-workload` component.
@@ -78,12 +78,14 @@ When a read is not possible (for example while a queue is bound to vfio-ap), the
 
 The driver shares the AP bus sysfs surface with the node administrator, and each attribute has exactly one writer.
 
-On a node the driver manages, three things belong to the driver:
+On a node the driver manages, these things belong to the driver:
 
 - `driver_override` on AP queues.
   It is the driver's rebinding mechanism and its crash-recovery marker: a queue whose override reads `vfio_ap` without a live vfio-ap mediated device behind it is reset to the zcrypt driver when the driver starts and after every claim unprepare.
   A manually written override is indistinguishable from a crash leftover and is reverted the same way, silently.
 - `drivers_probe` writes for AP queues, which act on the override.
+- Additional zcrypt device nodes named `cexdra-<claim UID prefix>`, created and destroyed with container claims, and the shadow AP sysfs trees under `--shadow-sysfs-root` that accompany them.
+  Nodes with any other name, such as ones made with `zcryptctl`, are never touched.
 - vfio-ap mediated devices.
   The reset spares mediated devices it did not create, but their queues remain published and schedulable, so a claim can be allocated onto one and the preparation rebind collides with the manual setup.
   Manual vfio-ap passthrough on driver-managed nodes is therefore unsupported.
@@ -96,7 +98,7 @@ The driver reads it and never writes it:
   Their effect is published as the `card_status` and `queue_status` attributes described in [DeviceClasses and attributes](reference/devices.md).
 - The zcrypt masks `apmask` and `aqmask`.
   Restricting them removes queues from host visibility and so from the published inventory.
-  The driver never writes them, but it does depend on them: its preflight phase fails a node whose masks are not all-1s, for the reason below.
+  The driver never writes them, but the virtual-machine path depends on them: on a node with `VirtualMachineWorkload` enabled, preflight fails when the masks are not all-1s, for the reason below.
 
 The kernel enforces this split: the two mechanisms are mutually exclusive.
 Every `apmask`/`aqmask` write returns `EINVAL` while any AP device carries a `driver_override`, and a `driver_override` write returns `EINVAL` while restricted masks are in use.

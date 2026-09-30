@@ -29,6 +29,7 @@ import (
 	"k8s-cex-dra-driver/internal/health"
 	"k8s-cex-dra-driver/internal/logphase"
 	"k8s-cex-dra-driver/internal/preflight"
+	"k8s-cex-dra-driver/internal/shadowsysfs"
 	"k8s-cex-dra-driver/internal/version"
 )
 
@@ -49,6 +50,7 @@ type Flags struct {
 	scanInterval                  time.Duration
 	healthcheckPort               int
 	cdiRoot                       string
+	shadowSysfsRoot               string
 	featureGates                  string
 }
 
@@ -156,6 +158,13 @@ func newApp() *cli.Command {
 				Sources:     cli.EnvVars("CDI_ROOT"),
 			},
 			&cli.StringFlag{
+				Name:        "shadow-sysfs-root",
+				Usage:       "Absolute host path holding the per-claim shadow AP sysfs trees of container claims; must be mounted at the same path into the plugin container",
+				Value:       shadowsysfs.BaseDir,
+				Destination: &flags.shadowSysfsRoot,
+				Sources:     cli.EnvVars("SHADOW_SYSFS_ROOT"),
+			},
+			&cli.StringFlag{
 				Name: "feature-gates",
 				Usage: "A set of Name=bool pairs enabling or disabling features. Options are:\n" +
 					strings.Join(features.KnownFeatures(), "\n"),
@@ -193,6 +202,9 @@ func newApp() *cli.Command {
 			}
 
 			if err := validateMachineID(flags.machineID); err != nil {
+				return err
+			}
+			if err := validateShadowSysfsRoot(flags.shadowSysfsRoot); err != nil {
 				return err
 			}
 
@@ -261,6 +273,17 @@ func validateMachineID(machineID string) error {
 	return nil
 }
 
+// validateShadowSysfsRoot rejects a relative --shadow-sysfs-root. The
+// container runtime resolves the trees' CDI mounts on the host, so the path
+// must be absolute and the same inside and outside the plugin pod. Same error
+// class as validateMachineID.
+func validateShadowSysfsRoot(root string) error {
+	if !filepath.IsAbs(root) {
+		return fmt.Errorf("--shadow-sysfs-root %q must be an absolute host path", root)
+	}
+	return nil
+}
+
 func newKubeClient(kubeconfig string) (coreclientset.Interface, error) {
 	var csconfig *rest.Config
 	var err error
@@ -317,6 +340,8 @@ func runPlugin(ctx context.Context, flags *Flags, coreclient coreclientset.Inter
 		logphase.Logf(logphase.Startup, "liveness service on %s, stale after %s", addr, staleAfter)
 	}
 	go health.Watch(ctx, heartbeat, staleAfter)
+
+	shadowsysfs.BaseDir = flags.shadowSysfsRoot
 
 	cfg := &driver.Config{
 		DriverName:                    DriverName,

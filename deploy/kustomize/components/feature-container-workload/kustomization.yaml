@@ -6,8 +6,26 @@ kind: Component
 # drift apart: the container DeviceClass, and the ContainerWorkload feature
 # gate the driver requires before it prepares a claim against that class.
 #
-# The path behind the gate is an unimplemented stub - opting in exposes it
-# for development, it does not make a container claim deliver a device.
+# A container claim gets a zcrypt device node restricted to
+# its allocated queues, mapped to /dev/z90crypt inside the container, and a
+# shadow AP sysfs listing only those queues, mounted over the container's
+# /sys/bus/ap and /sys/devices/ap. The component also carries the host mounts
+# that path writes through: the zcrypt class (node create/destroy), the
+# virtual device tree that holds each node's masks, the host CDI directory
+# the runtime resolves specs from, and the shadow sysfs root. The last is
+# mounted at its host path because the runtime resolves the CDI mounts that
+# point into it on the host; /var/run is a tmpfs, so the trees vanish on
+# reboot together with the zcrypt nodes and the claims they belong to.
+#
+# The masks live under /sys/devices/virtual/zcrypt, but the kernel creates
+# that directory only with the first additional node, so a node without one
+# would fail a `type: Directory` check on it and the pod would never start.
+# Its parent /sys/devices/virtual always exists and, being sysfs, shows the
+# zcrypt subtree live once the driver creates the first node - so the parent
+# is mounted instead. `type: Directory` on /sys/class/zcrypt gates pod start
+# on the zcrypt module being loaded. The CDI mount repeats the one in
+# vfio-ap-mounts under the same names, so the two components merge cleanly
+# when both are listed.
 #
 # The gate travels as the FEATURE_GATES environment variable, the form every
 # driver option takes here: env entries merge by name under a strategic merge,
@@ -33,3 +51,29 @@ patches:
                 env:
                   - name: FEATURE_GATES
                     value: ContainerWorkload=true
+                volumeMounts:
+                  - name: sys-class-zcrypt
+                    mountPath: /sys/class/zcrypt
+                  - name: sys-devices-virtual
+                    mountPath: /sys/devices/virtual
+                  - name: cdi
+                    mountPath: /var/run/cdi
+                  - name: shadow-sysfs
+                    mountPath: /var/run/cex-dra/shadowsysfs
+            volumes:
+              - name: sys-class-zcrypt
+                hostPath:
+                  path: /sys/class/zcrypt
+                  type: Directory
+              - name: sys-devices-virtual
+                hostPath:
+                  path: /sys/devices/virtual
+                  type: Directory
+              - name: cdi
+                hostPath:
+                  path: /var/run/cdi
+                  type: DirectoryOrCreate
+              - name: shadow-sysfs
+                hostPath:
+                  path: /var/run/cex-dra/shadowsysfs
+                  type: DirectoryOrCreate

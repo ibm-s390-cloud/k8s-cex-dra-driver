@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"k8s-cex-dra-driver/internal/cryptoconfig"
+	"k8s-cex-dra-driver/internal/zcrypt"
 )
 
 // TestPrepareRejectsMalformedConfigOnEitherBinding pins that strict parsing is a
@@ -75,9 +76,9 @@ func TestPrepareRejectsMalformedConfigOnEitherBinding(t *testing.T) {
 
 // TestPrepareAcceptsWellFormedConfigOnEitherBinding is the counterweight to the
 // test above: parsing is strict, not hostile. A container claim carrying a
-// control-domain mode the container path cannot act on - including one the
-// driver refuses on the VM path - still prepares, because the field is a no-op
-// for a zcrypt binding rather than an error.
+// control-domain mode the container path does not serve - including one the
+// driver refuses on the VM path - still prepares: the node then grants no
+// control domain rather than failing the claim.
 func TestPrepareAcceptsWellFormedConfigOnEitherBinding(t *testing.T) {
 	// See TestPrepareRejectsMalformedConfigOnEitherBinding: the container half
 	// is reachable only with the ContainerWorkload gate on.
@@ -99,6 +100,9 @@ func TestPrepareAcceptsWellFormedConfigOnEitherBinding(t *testing.T) {
 			// The VM case needs a matrix root: usage-only still builds an mdev,
 			// it just assigns no control domain.
 			newUnprepareFixture(t, nil)
+			if tc.deviceClass == DeviceClassContainer {
+				newZcryptFixture(t).addNode(t, zcrypt.NodeName("claim-under-test"))
+			}
 			s := cdTestState(t)
 
 			_, err := s.Prepare(t.Context(), claimWithMode(t, tc.deviceClass, tc.mode))

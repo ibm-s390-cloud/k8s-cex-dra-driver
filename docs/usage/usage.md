@@ -143,9 +143,72 @@ See the [claim configuration reference](../reference/claim-configuration.md) for
 
 The configuration is strict: unknown fields, a wrong `kind`, or a wrong `apiVersion` are rejected.
 Scope is the whole claim - one effective value, merged from the built-in default, then DeviceClass configuration, then claim configuration.
-For container claims the field is ignored rather than rejected, so the same claim text works for either binding type.
+For container claims the enabled modes set the zcrypt node's control-domain mask, and a mode that is not enabled grants no control domain rather than failing the claim, so the same claim text works for either binding type.
 
 The kernel has the last word: assigned control domains are intersected with the host's `ap_control_domain_mask`, so a domain the LPAR does not control never becomes effective in the guest.
+
+## Containers
+
+With the alpha `ContainerWorkload` gate and the `feature-container-workload` component installed, a pod requests queues from the container DeviceClass:
+
+```yaml
+apiVersion: resource.k8s.io/v1
+kind: ResourceClaimTemplate
+metadata:
+  namespace: default
+  name: single-ep11-ap-queue-container
+spec:
+  spec:
+    devices:
+      requests:
+        - name: ep11-ap-queue
+          exactly:
+            deviceClassName: ap-queue.container.ibm.com
+            allocationMode: ExactCount
+            count: 1
+            selectors:
+              - cel:
+                  expression: device.attributes["cex.ibm.com"].type == "ep11"
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  namespace: default
+  name: cex-container
+spec:
+  resourceClaims:
+    - name: cex
+      resourceClaimTemplateName: single-ep11-ap-queue-container
+  containers:
+    - name: app
+      image: registry.example.com/my-crypto-app
+      resources:
+        claims:
+          - name: cex
+```
+
+For each claim the driver creates a zcrypt device node whose adapter, usage-domain and control-domain masks grant exactly the allocated queues, and hands it to the container as `/dev/z90crypt`, the path libica, openCryptoki and the s390-tools open by default.
+The node is world read-writable inside the container, so workloads need not run as root: the masks, not the file mode, bound what it reaches.
+The container also receives `CEX_APQNS`, the comma-separated list of its queues (`06.0000`).
+The queues stay bound to the zcrypt driver throughout, so this path needs neither `vfio_ap` nor AP-bus `driver_override`.
+A queue that is not bound to zcrypt when the claim is prepared, for example one still on `vfio_ap`, fails the prepare with an error naming it.
+
+Several queues in one claim follow the same rule as for virtual machines: the node's masks are a cross-product of adapters and domains, so constrain the queues to one domain with `matchAttribute` as in [Co-locating queues in one domain](#co-locating-queues-in-one-domain).
+
+The container's AP sysfs is narrowed to the claim as well.
+The driver builds a small copy of `/sys/bus/ap` and `/sys/devices/ap` holding only the allocated cards and queues and mounts it read-only over both paths, so `lszcrypt` inside the container lists exactly the claim's queues, and software that enumerates the bus before opening `/dev/z90crypt` picks one it can reach. For a claim holding queue 06.0000 of a CEX6P in EP11 mode:
+
+```text
+$ lszcrypt
+CARD.DOM TYPE  MODE        STATUS  REQUESTS
+-----------------------------------------------
+06       CEX6P EP11-Coproc online         0
+06.0000  CEX6P EP11-Coproc online         0
+```
+
+The copy is taken when the claim is prepared.
+Static attributes such as the card type, firmware level and master key verification patterns (`mkvps`) are copied from the host, the masks are generated from the allocation, and state and counter attributes read as online and idle.
+It does not follow later changes on the host: a card that goes offline still reads online in the container, and the request counters stay at 0.
 
 ## Verification
 

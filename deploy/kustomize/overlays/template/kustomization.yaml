@@ -15,7 +15,7 @@ resources:
 # of this example - it is for dev/demo clusters only. So is
 # ../../components/feature-container-workload: it opts into the alpha container
 # workload path (container DeviceClass + ContainerWorkload feature gate), which
-# is an unimplemented stub in this release.
+# is alpha in this release.
 components:
   - ../../components/deviceclass-vm
   # VM path needs the writable /sys/devices/vfio_ap mount once the base is

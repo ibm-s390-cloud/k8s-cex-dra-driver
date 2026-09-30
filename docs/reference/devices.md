@@ -7,10 +7,10 @@ description: >
 
 ## DeviceClasses
 
-| Name                               | Binding                                                                      |
-| ---------------------------------- | ---------------------------------------------------------------------------- |
-| `ap-queue.virtual-machine.ibm.com` | vfio-ap mediated device for a KubeVirt VM                                    |
-| `ap-queue.container.ibm.com`       | zcrypt device nodes into a container (feature gated, disabled at this stage) |
+| Name                               | Binding                                                    |
+| ---------------------------------- | ---------------------------------------------------------- |
+| `ap-queue.virtual-machine.ibm.com` | vfio-ap mediated device for a KubeVirt VM                  |
+| `ap-queue.container.ibm.com`       | zcrypt device node into a container (alpha, feature gated) |
 
 Both select `device.driver == 'cex-driver.ibm.com'`.
 
