@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"k8s-cex-dra-driver/internal/features"
 )
@@ -58,6 +59,45 @@ func TestValidateMachineID(t *testing.T) {
 				t.Fatalf("validateMachineID(%q) = nil, want an error containing %q", tt.machineID, tt.wantErr)
 			}
 			for _, want := range []string{tt.wantErr, "--machine-id"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err = %q, want it to contain %q", err, want)
+				}
+			}
+		})
+	}
+}
+
+// TestValidateScanInterval pins the startup contract of --scan-interval:
+// the floor and anything above it pass, anything below fails here naming
+// the flag, whether it would have spun the liveness watchdog into a
+// restart loop or panicked its ticker.
+func TestValidateScanInterval(t *testing.T) {
+	tests := []struct {
+		name         string
+		scanInterval time.Duration
+		wantErr      string // substring of the error, empty means no error
+	}{
+		{"shipped default", 30 * time.Second, ""},
+		{"floor", minScanInterval, ""},
+		{"just below the floor", minScanInterval - time.Nanosecond, "below the minimum"},
+		{"one nanosecond", time.Nanosecond, "below the minimum"},
+		{"zero", 0, "below the minimum"},
+		{"negative", -5 * time.Second, "below the minimum"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validateScanInterval(tt.scanInterval)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("validateScanInterval(%v) = %v, want nil", tt.scanInterval, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("validateScanInterval(%v) = nil, want an error containing %q", tt.scanInterval, tt.wantErr)
+			}
+			for _, want := range []string{tt.wantErr, "--scan-interval"} {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("err = %q, want it to contain %q", err, want)
 				}

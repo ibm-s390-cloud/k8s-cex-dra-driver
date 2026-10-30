@@ -1,4 +1,8 @@
-FROM quay.io/projectquay/golang:1.26 AS builder
+# The builder runs on the build host's own platform. The Go toolchain
+# cross-compiles for s390x either way, so emulating the builder under
+# --platform=linux/s390x would only slow the build down. The --platform
+# flag still selects the runtime base below.
+FROM --platform=$BUILDPLATFORM quay.io/projectquay/golang:1.26 AS builder
 # The build context carries no .git (see .dockerignore), so the build
 # identity comes in from outside: podman build --build-arg VERSION="$(git
 # describe --tags --always --dirty --long)". Left at the default, the binary

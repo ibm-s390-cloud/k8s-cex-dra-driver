@@ -243,13 +243,12 @@ func scanCard(cardEntry os.DirEntry, machineID string, tracker *MKVPTracker) (de
 // readCardStatus derives cex.ibm.com/card_status from the card's config and
 // chkstop sysfs attributes plus, on a configured card, the zcrypt-layer
 // online attribute (the kernel's ac->config && !ac->chkstop && zc->online
-// composite, admin-writable via chzcrypt). The bus scan sets config and
-// chkstop from a single TAPQ response code and firmware reports DECONFIGURED
-// with priority, so both set at once can only be a torn read between the two
-// file reads. chkstop wins the tie-break as the more specific failure. The
-// online file exists only while a zcrypt card driver is bound. Its absence
-// means configured, not a failure. A read failure yields "unknown" for this
-// cycle only: the device stays published and the next scan re-reads.
+// composite, admin-writable via chzcrypt). config == 0 is tested first, so a
+// card reading config == 0 and chkstop == 1 at once publishes "deconfig",
+// which is what lszcrypt reports for it too. The online file exists only
+// while a zcrypt card driver is bound. Its absence means configured, not a
+// failure. A read failure yields "unknown" for this cycle only: the device
+// stays published and the next scan re-reads.
 func readCardStatus(cardPath string) string {
 	config, err := sysfs.ReadFile(filepath.Join(cardPath, "config"))
 	if err != nil {
@@ -260,10 +259,10 @@ func readCardStatus(cardPath string) string {
 		return CardStatusUnknown
 	}
 	switch {
-	case strings.TrimSpace(chkstop) == "1":
-		return CardStatusChkstop
 	case strings.TrimSpace(config) == "0":
 		return CardStatusDeconfig
+	case strings.TrimSpace(chkstop) == "1":
+		return CardStatusChkstop
 	case strings.TrimSpace(config) == "1":
 		online, err := sysfs.ReadFile(filepath.Join(cardPath, "online"))
 		if err != nil {

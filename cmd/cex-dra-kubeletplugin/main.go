@@ -196,6 +196,10 @@ func newApp() *cli.Command {
 				return err
 			}
 
+			if err := validateScanInterval(flags.scanInterval); err != nil {
+				return err
+			}
+
 			if err := preflight.Run(); err != nil {
 				return err
 			}
@@ -257,6 +261,28 @@ func validateMachineID(machineID string) error {
 	if errs := validation.IsDNS1123Label(machineID); len(errs) > 0 {
 		return fmt.Errorf("--machine-id %q is not a DNS-1123 label, which device names must be: %s",
 			machineID, strings.Join(errs, ", "))
+	}
+	return nil
+}
+
+// minScanInterval is the floor for --scan-interval. The liveness threshold
+// is ten times the interval and the watchdog samples it at a quarter of
+// that, so a tiny interval leaves a threshold no scan cycle can meet: the
+// probe reports not-serving on a healthy node and the kubelet restarts the
+// driver in a loop. Below four nanoseconds the watchdog ticker rounds to
+// zero and panics outright. One second keeps the threshold at ten seconds,
+// clear of the time a card that still answers adds to a cycle.
+const minScanInterval = 1 * time.Second
+
+// validateScanInterval rejects a --scan-interval below the floor before
+// it reaches a ticker. Non-positive values would panic time.NewTicker,
+// first inside the liveness watchdog goroutine, so the operator would get
+// a stack trace instead of the flag name. Same error class as
+// validateWorkloadGates: exit code 1, the node is fine, the flag is not.
+func validateScanInterval(scanInterval time.Duration) error {
+	if scanInterval < minScanInterval {
+		return fmt.Errorf("--scan-interval %s is below the minimum of %s: the liveness threshold is ten times the interval and a shorter one restarts a healthy driver",
+			scanInterval, minScanInterval)
 	}
 	return nil
 }

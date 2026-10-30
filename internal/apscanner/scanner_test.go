@@ -392,7 +392,7 @@ func TestReadCardStatus(t *testing.T) {
 		{"deconfig wins over online", ptr("0\n"), ptr("0\n"), ptr("1\n"), CardStatusDeconfig},
 		{"chkstop", ptr("1\n"), ptr("1\n"), nil, CardStatusChkstop},
 		{"chkstop wins over online", ptr("1\n"), ptr("1\n"), ptr("0\n"), CardStatusChkstop},
-		{"chkstop wins torn read", ptr("0\n"), ptr("1\n"), nil, CardStatusChkstop},
+		{"deconfig wins over chkstop", ptr("0\n"), ptr("1\n"), nil, CardStatusDeconfig},
 		{"config missing", nil, ptr("0\n"), nil, CardStatusUnknown},
 		{"chkstop missing", ptr("1\n"), nil, nil, CardStatusUnknown},
 		{"garbage content", ptr("maybe\n"), ptr("0\n"), nil, CardStatusUnknown},

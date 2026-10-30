@@ -15,8 +15,8 @@ The repository's `Dockerfile` builds the kubelet plugin image:
 ```bash
 podman build --platform=linux/s390x \
   --build-arg VERSION="$(git describe --tags --always --dirty --long)" \
-  -t cex-dra-kubeletplugin:v1.0.0-alpha.0 .
-podman push cex-dra-kubeletplugin:v1.0.0-alpha.0 registry.example.com/cex-dra-kubeletplugin:v1.0.0-alpha.0
+  -t cex-dra-kubeletplugin:v1.0.0-alpha.1 .
+podman push cex-dra-kubeletplugin:v1.0.0-alpha.1 registry.example.com/cex-dra-kubeletplugin:v1.0.0-alpha.1
 ```
 
 The build stage always cross-compiles the binary for s390x, but the runtime base image is pulled for the build host's architecture by default.
@@ -26,7 +26,7 @@ On an s390x host the flag is a no-op.
 
 The `VERSION` build argument carries the build identity the binary reports, from `--version` and as its first log line.
 `.dockerignore` keeps `.git` out of the build context, so the value has to come in from outside; left out entirely, the image reports `dev` and a running driver cannot be traced back to a source tree.
-`--long` keeps the commit id in the string on a commit that is exactly a release tag (`v1.0.0-alpha.0-0-g1a2b3c4` instead of `v1.0.0-alpha.0`), so the identity still names the commit if the tag is later moved.
+`--long` keeps the commit id in the string on a commit that is exactly a release tag (`v1.0.0-alpha.1-0-g1a2b3c4` instead of `v1.0.0-alpha.1`), so the identity still names the commit if the tag is later moved.
 Building from an unpacked source archive rather than a clone leaves `git describe` with nothing to report: pass the release tag and the commit it was cut from by hand, in the same shape.
 
 Any registry the cluster nodes can pull from works.
@@ -71,7 +71,7 @@ cp -r deploy/kustomize/overlays/template deploy/kustomize/overlays/my-cluster
    images:
      - name: cex-dra-kubeletplugin
        newName: registry.example.com/cex-dra-kubeletplugin
-       newTag: v1.0.0-alpha.0
+       newTag: v1.0.0-alpha.1
    ```
 
    Pin a release tag, not `latest`: the base sets `imagePullPolicy: IfNotPresent`, so a moving tag is never re-pulled once a node holds any image by that name - the node silently keeps running the stale build.

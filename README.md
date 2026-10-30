@@ -15,8 +15,8 @@ Start with the [documentation](./docs/_index.md) or jump straight to the [quicks
 
 ## Status
 
-The current release is `v1.0.0-alpha.0`.
-It is the first public Technical Preview.
+The current release is `v1.0.0-alpha.1`.
+It is a public Technical Preview.
 Public settings and device properties may change before version `v1.0.0`.
 
 [`CHANGELOG.md`](./CHANGELOG.md) lists changes between releases.

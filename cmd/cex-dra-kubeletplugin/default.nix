@@ -16,7 +16,7 @@ pkgs.stdenv.mkDerivation rec {
   pname = "cex-dra-kubeletplugin";
   # Tracks the newest release heading in CHANGELOG.md, unprefixed per nix
   # convention. `make release-check` gates the pair staying in step.
-  version = "1.0.0-alpha.0";
+  version = "1.0.0-alpha.1";
 
   src = ../../.;   # repo root (where go.mod and Makefile live)
 

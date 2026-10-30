@@ -119,6 +119,13 @@ manifests-check:
 		| grep -q '^ *- name: HEALTHCHECK_PORT$$' || \
 		{ echo "template: HEALTHCHECK_PORT must survive the overlay"; exit 1; }
 
+# The KubeVirt CI deploy tree, in its own block so the hunk stays
+# independent of the list above when it is picked onto a release branch.
+SH_SRC += contrib/kubevirt-ci/cex-dra.sh \
+          contrib/kubevirt-ci/lib/assert.sh contrib/kubevirt-ci/lib/driver.sh \
+          contrib/kubevirt-ci/lib/helpers.sh contrib/kubevirt-ci/lib/uninstall.sh \
+          contrib/kubevirt-ci/lib/workloads.sh
+
 bash-check:
 	@if [ -n "$(SH_SRC)" ]; then \
 		bash -n $(SH_SRC); \

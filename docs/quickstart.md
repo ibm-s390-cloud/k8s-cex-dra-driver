@@ -26,8 +26,8 @@ Build the image from the repository's `Dockerfile` and push it to your registry 
 ```bash
 podman build --platform=linux/s390x \
   --build-arg VERSION="$(git describe --tags --always --dirty --long)" \
-  -t cex-dra-kubeletplugin:v1.0.0-alpha.0 .
-podman push cex-dra-kubeletplugin:v1.0.0-alpha.0 registry.example.com/cex-dra-kubeletplugin:v1.0.0-alpha.0
+  -t cex-dra-kubeletplugin:v1.0.0-alpha.1 .
+podman push cex-dra-kubeletplugin:v1.0.0-alpha.1 registry.example.com/cex-dra-kubeletplugin:v1.0.0-alpha.1
 ```
 
 The `VERSION` build argument is what the driver reports in its first log line and from `--version`.
@@ -46,7 +46,7 @@ Edit `deploy/kustomize/overlays/my-cluster/kustomization.yaml` and set the image
 images:
   - name: cex-dra-kubeletplugin
     newName: registry.example.com/cex-dra-kubeletplugin
-    newTag: v1.0.0-alpha.0
+    newTag: v1.0.0-alpha.1
 ```
 
 Then apply:

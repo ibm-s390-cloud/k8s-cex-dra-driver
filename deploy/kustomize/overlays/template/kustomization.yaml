@@ -38,7 +38,7 @@ components:
 images:
   - name: cex-dra-kubeletplugin
     newName: REGISTRY/cex-dra-kubeletplugin
-    newTag: v1.0.0-alpha.0
+    newTag: v1.0.0-alpha.1
 
 # Keep in sync with newTag above - the label states which release runs, the
 # tag decides it. Applied here, at the aggregator, so the cluster-scoped
@@ -47,7 +47,7 @@ labels:
   - includeSelectors: false
     includeTemplates: true
     pairs:
-      app.kubernetes.io/version: v1.0.0-alpha.0
+      app.kubernetes.io/version: v1.0.0-alpha.1
 
 # Example option override: change the scan interval. The explicit target matches
 # the DaemonSet regardless of namespace. The env entry merges into the base list

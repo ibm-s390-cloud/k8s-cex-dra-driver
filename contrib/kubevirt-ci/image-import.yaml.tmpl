@@ -1,0 +1,51 @@
+# Copyright contributors to the k8s-cex-dra-driver project
+# SPDX-License-Identifier: Apache-2.0
+
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: cex-dra-image-import
+  namespace: ${REGISTRY_NS}
+spec:
+  backoffLimit: 1
+  template:
+    spec:
+      restartPolicy: Never
+      nodeName: ${NODE}
+      securityContext:
+        seLinuxOptions:
+          type: spc_t
+      containers:
+        - name: import
+          image: ${IMPORT_IMAGE}
+          imagePullPolicy: IfNotPresent
+          command:
+            - skopeo
+            - copy
+            - --insecure-policy
+            - --src-tls-verify=false
+            - "${SRC}"
+            - "containers-storage:${IMAGE}"
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: containers
+              mountPath: /var/lib/containers
+            - name: etc-containers
+              mountPath: /etc/containers
+              readOnly: true
+            - name: run-containers
+              mountPath: /run/containers
+      volumes:
+        - name: containers
+          hostPath:
+            path: /var/lib/containers
+            type: Directory
+        - name: etc-containers
+          hostPath:
+            path: /etc/containers
+            type: Directory
+        - name: run-containers
+          hostPath:
+            path: /run/containers
+            type: DirectoryOrCreate
